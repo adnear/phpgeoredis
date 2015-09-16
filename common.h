@@ -28,6 +28,14 @@
 #define REDIS_ZSET 4
 #define REDIS_HASH 5
 
+
+typedef enum _REDIS_GEO_TYPE {
+	TYPE_NAMES = 0,
+	TYPE_DIST = 1,
+	TYPE_HASH = 2,
+	TYPE_COORD = 4
+} REDIS_GEO_REPLY_TYPE;
+
 /* reply types */
 typedef enum _REDIS_REPLY_TYPE {
     TYPE_EOF       = EOF,

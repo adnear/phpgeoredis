@@ -744,6 +744,70 @@ PHP_REDIS_API void redis_type_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *
     }
 }
 
+PHP_REDIS_API void redis_georadius_distance_response(INTERNAL_FUNCTION_PARAMETERS, int type, RedisSock *redis_sock, zval *z_tab, void *ctx) {
+    char inbuf[1024], *data, *tempData;
+	int numElems,numElems2, iCount, jCount, kCount;
+	int response_len;
+    zval *z_multi_result, *z_data_result, *z_coord;
+
+    if(-1 == redis_check_eof(redis_sock TSRMLS_CC)) {
+        RETURN_FALSE;
+    }
+    if(php_stream_gets(redis_sock->stream, inbuf, 1024) == NULL) {
+		redis_stream_close(redis_sock TSRMLS_CC);
+        redis_sock->stream = NULL;
+        redis_sock->status = REDIS_SOCK_STATUS_FAILED;
+        redis_sock->mode = ATOMIC;
+        redis_sock->watching = 0;
+        zend_throw_exception(redis_exception_ce, "read error on connection", 0 TSRMLS_CC);
+        RETURN_FALSE;
+    }
+	numElems = atoi(inbuf+1);
+    MAKE_STD_ZVAL(z_multi_result);
+	array_init(z_multi_result);	
+    for(iCount =0; iCount < numElems; ++iCount){
+		data = redis_sock_read(redis_sock, &response_len); 
+		numElems2 = atoi(data+1);
+		MAKE_STD_ZVAL(z_data_result);
+		array_init(z_data_result);
+		jCount = 0;
+		tempData = redis_sock_read(redis_sock, &response_len);
+		add_assoc_stringl(z_data_result,"name", tempData,response_len, 0);
+		if((type & TYPE_DIST) != 0){
+			tempData = redis_sock_read(redis_sock, &response_len);
+			add_assoc_stringl(z_data_result,"distance", tempData,response_len, 0);
+		}
+		if((type & TYPE_HASH) != 0){
+			tempData = redis_sock_read(redis_sock, &response_len);
+			add_assoc_long(z_data_result,"hash", atol(tempData +1));		
+		}
+		if((type & TYPE_COORD) != 0){
+			tempData = redis_sock_read(redis_sock, &response_len);
+			if(atoi(tempData+1) == 2){
+				MAKE_STD_ZVAL(z_coord);
+				array_init(z_coord);
+				tempData = redis_sock_read(redis_sock, &response_len);
+				add_assoc_stringl(z_coord, "lon", tempData,response_len, 0);
+				//add_next_index_stringl(z_coord, tempData, response_len, 0);
+				tempData = redis_sock_read(redis_sock, &response_len);
+				add_assoc_stringl(z_coord, "lat", tempData, response_len, 0);
+				//add_next_index_zval(z_data_result, z_coord);
+				add_assoc_zval(z_data_result,"coord",z_coord);
+			}
+		}
+
+		add_next_index_zval(z_multi_result, z_data_result);
+		
+	}
+	
+	IF_MULTI_OR_PIPELINE() {
+        add_next_index_zval(z_tab, z_multi_result);
+    } else {
+        RETVAL_ZVAL(z_multi_result, 0, 1);
+    }
+}
+
+
 PHP_REDIS_API void redis_info_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, zval *z_tab, void *ctx) {
     char *response;
     int response_len;

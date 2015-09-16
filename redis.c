@@ -7557,22 +7557,29 @@ PHP_METHOD(Redis, pfmerge) {
     REDIS_PROCESS_RESPONSE(redis_boolean_response);
 }
 
-/* {{{ array Redis::georadius(string hash, geoset latitude longitude radius units, [ascending|descending]) */
+/* {{{ array Redis::georadius(string hash, string longitude, string latitude,
+ *  long radius, string units, [ascending|descending]),
+ *  bool withDistance, bool withCoords, bool withHash*/
 PHP_METHOD(Redis, georadius) {
     zval *object;
     RedisSock *redis_sock;
-    char *key = NULL, *lat = NULL, *lon = NULL, *dist = NULL, *unit = NULL, *order = NULL, *cmd;
+    char *key = NULL, *lat = NULL, *lon = NULL, *dist = NULL, *unit = NULL, *cmd, *order_str = "ASC";
     zval *z_array, **z_keys, **data;
-    int field_count, i, valid, key_len, key_free,lat_len, lon_len, dist_len, unit_len, order_len, cmd_len;
+    int field_count, i, valid, key_len, key_free,lat_len, lon_len, dist_len, unit_len, cmd_len, order_len = 3;
     HashTable *ht_array;
     HashPosition ptr;
     int arg_nos = 5;
     long distance = 0;
-    //smart_str cmd = {0};
-
+    long order = 0;
+    zend_bool withDistance = 0, withCoords = 0, withHash = 0;
+    smart_str scmd = {0};
+    int arg_count = 0;
+    int type = 0;
     /* Make sure we can grab our arguments properly */
-    if(zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(),  "Osssls|s",
-		&object, redis_ce, &key, &key_len, &lat, &lat_len, &lon, &lon_len, &distance, &unit, &unit_len, &order, &order_len)
+    if(zend_parse_method_parameters(ZEND_NUM_ARGS() TSRMLS_CC, getThis(),  "Osssls|lbbb",
+		&object, redis_ce, &key, &key_len, &lat, &lat_len, &lon, &lon_len, 
+		&distance, &unit, &unit_len, &order, &withDistance,
+		&withCoords, &withHash)
                                     == FAILURE)
     {
         RETURN_FALSE;
@@ -7582,31 +7589,74 @@ PHP_METHOD(Redis, georadius) {
     if(redis_sock_get(object, &redis_sock TSRMLS_CC, 0) < 0) {
         RETURN_FALSE;
     }
+    
+    arg_count = 5;
+    if(order == 1 || order == 2){
+		arg_count += 1;
+	}
+	if(withDistance){
+		arg_count += 1;
+	}
+	if(withCoords){
+		arg_count += 1;
+	}
+	if(withHash){
+		arg_count += 1;
+	}
 
     /* Add prefix if needed */
     key_free = redis_key_prefix(redis_sock, &key, &key_len TSRMLS_CC);
 
     /* Build command header.  Change number of arguments if order is specified*/
 
-	if(order != NULL && order_len > 0){
-    	 cmd_len = redis_cmd_format_static(&cmd, "GEORADIUS", "ssslss", key, key_len, lat, lat_len, lon, lon_len, distance, unit, unit_len,order, order_len);
-    }
-    else{
-		cmd_len = redis_cmd_format_static(&cmd, "GEORADIUS", "sssls", key, key_len, lat, lat_len, lon, lon_len, distance, unit, unit_len);
-    }
+	redis_cmd_init_sstr(&scmd, arg_count, "GEORADIUS", 9);
+	redis_cmd_append_sstr(&scmd, key, key_len);
+	redis_cmd_append_sstr(&scmd, lat, lat_len);
+	redis_cmd_append_sstr(&scmd, lon, lon_len);
+	redis_cmd_append_sstr_long(&scmd, distance);
+	redis_cmd_append_sstr(&scmd, unit, unit_len);
+	
+	if(order == 1){
+		redis_cmd_append_sstr(&scmd, "ASC", 3);
+	}
+	else if(order == 2){
+		redis_cmd_append_sstr(&scmd, "DESC", 4);
+	}
+    if(withDistance){
+		redis_cmd_append_sstr(&scmd, "WITHDIST",8);
+		type |= TYPE_DIST;
+	}
+    if(withCoords){
+		redis_cmd_append_sstr(&scmd, "WITHCOORD",9);
+		type |= TYPE_COORD;
+	}
+    if(withHash){
+		redis_cmd_append_sstr(&scmd, "WITHHASH",8);
+		type |= TYPE_HASH;
+	}
     /* Free key if prefix was added */
     if(key_free) efree(key);
 
     /* Kick off our request */
-    REDIS_PROCESS_REQUEST(redis_sock, cmd, cmd_len);
-    IF_ATOMIC() {
-        redis_sock_read_multibulk_reply(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
-    }
-     REDIS_PROCESS_RESPONSE(redis_sock_read_multibulk_reply);
+    REDIS_PROCESS_REQUEST(redis_sock, scmd.c, scmd.len);
+    
+    
+    if(type != TYPE_NAMES){
+		IF_ATOMIC() {
+			redis_georadius_distance_response(INTERNAL_FUNCTION_PARAM_PASSTHRU, type, redis_sock, NULL, NULL);
+		}
+		 REDIS_PROCESS_RESPONSE(redis_georadius_distance_response);
+	}
+	else{
+		IF_ATOMIC() {
+			redis_sock_read_multibulk_reply(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
+		}
+		 REDIS_PROCESS_RESPONSE(redis_sock_read_multibulk_reply);
+	}
 }
 
 
-/* {{{ int Redis::geoadd(string hash, string latitude, string longitude, string member) */
+/* {{{ int Redis::geoadd(string hash, string longitude, string latitude, string member) */
 PHP_METHOD(Redis, geoadd) {
     zval *object;
     RedisSock *redis_sock;
